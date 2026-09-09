@@ -13,6 +13,8 @@ import {
   ChevronUp,
   AlertCircle,
   Circle,
+  Image as ImageIcon,
+  Download,
 } from "lucide-react";
 
 const DEFAULT_SYSTEM_CONTEXT = `You are the content-generation engine for a comedy/entertainment social media account posting across TikTok, Instagram Reels, YouTube Shorts, X, and Facebook.
@@ -29,6 +31,106 @@ const PLATFORM_WINDOWS = [
   { platform: "X", window: "~9pm", note: "Tue/Wed strongest" },
   { platform: "Facebook", window: "Evening", note: "sustained engagement" },
 ];
+
+function loadPuterScript() {
+  return new Promise((resolve, reject) => {
+    if (window.puter) return resolve();
+    const existing = document.querySelector('script[src="https://js.puter.com/v2/"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Failed to load Puter.js")));
+      return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://js.puter.com/v2/";
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Failed to load Puter.js"));
+    document.head.appendChild(s);
+  });
+}
+
+async function fetchWithTimeout(url, ms) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+// Tier 1: Pollinations.ai (free, no key). Tier 2 on failure: Puter.js (free, needs a one-time login popup).
+async function generateImageWithFallback(prompt, onStageChange) {
+  try {
+    onStageChange?.("Trying Pollinations.ai…");
+    const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
+      prompt
+    )}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
+    const res = await fetchWithTimeout(url, 25000);
+    if (!res.ok) throw new Error(`Pollinations returned ${res.status}`);
+    const blob = await res.blob();
+    if (!blob.type.startsWith("image/")) throw new Error("Pollinations did not return an image");
+    return { src: URL.createObjectURL(blob), provider: "Pollinations.ai" };
+  } catch (e) {
+    console.warn("Pollinations.ai failed, falling back to Puter.js:", e);
+  }
+  onStageChange?.("Pollinations unavailable — trying Puter.js…");
+  await loadPuterScript();
+  const imgEl = await window.puter.ai.txt2img(prompt);
+  return { src: imgEl.src, provider: "Puter.js" };
+}
+
+function ImageGenerator({ prompt }) {
+  const [status, setStatus] = useState("idle"); // idle | loading | done | failed
+  const [stage, setStage] = useState("");
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+
+  const generate = async () => {
+    setStatus("loading");
+    setResult(null);
+    setError("");
+    try {
+      const r = await generateImageWithFallback(prompt, setStage);
+      setResult(r);
+      setStatus("done");
+    } catch (e) {
+      setStatus("failed");
+      setError("Both free providers failed right now — use the copy-prompt button above with the Gemini app instead.");
+    }
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      <button
+        onClick={generate}
+        disabled={status === "loading"}
+        className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-md bg-amber-500/15 hover:bg-amber-500/25 disabled:opacity-60 text-amber-300 transition-colors"
+      >
+        {status === "loading" ? <Loader2 size={13} className="animate-spin" /> : <ImageIcon size={13} />}
+        {status === "loading" ? stage : result ? "Regenerate image" : "Generate image"}
+      </button>
+
+      {result && status === "done" && (
+        <div>
+          <img src={result.src} alt="" className="rounded-lg w-full max-w-[280px] border border-white/10" />
+          <div className="flex items-center gap-3 mt-1.5">
+            <span className="text-[10px] text-stone-600">via {result.provider}</span>
+            <a
+              href={result.src}
+              download={`segment-${Date.now()}.png`}
+              className="inline-flex items-center gap-1 text-[10px] text-stone-500 hover:text-amber-400"
+            >
+              <Download size={11} /> Download
+            </a>
+          </div>
+        </div>
+      )}
+
+      {status === "failed" && <p className="text-xs text-red-400">{error}</p>}
+    </div>
+  );
+}
 
 function useLocalHistory() {
   const [history, setHistory] = useState([]);
@@ -550,15 +652,17 @@ Respond with ONLY a JSON object, no preamble, no markdown fences, with exactly t
                         <CopyButton text={beat.visual_prompt} label="Copy prompt" />
                       </div>
                       <p className={"text-stone-400 mt-1 " + monoCls}>{beat.visual_prompt}</p>
+                      <ImageGenerator prompt={beat.visual_prompt} />
                     </div>
                   ))}
                 </div>
 
                 <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
-                  <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1.5">Next steps — free, manual</p>
+                  <p className="text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-1.5">Next steps</p>
                   <ol className="text-xs text-stone-400 space-y-1 list-decimal list-inside">
-                    <li>Paste each numbered prompt above into the Gemini app's image tool (free, ~20 images/day) to generate a static image per segment.</li>
-                    <li>Import all {(songPiece.beat_map || []).length} images into CapCut (free).</li>
+                    <li>Tap "Generate image" on each segment above — tries Pollinations.ai first, auto-falls back to Puter.js if that's down (Puter may ask you to log in once).</li>
+                    <li>If both fail, use "Copy prompt" and paste it into the Gemini app manually instead (free, ~20 images/day).</li>
+                    <li>Download all {(songPiece.beat_map || []).length} images and import into CapCut (free).</li>
                     <li>Add pan/zoom (Ken Burns) effects to each, timed to that segment's part of the song.</li>
                     <li>Export and post.</li>
                   </ol>

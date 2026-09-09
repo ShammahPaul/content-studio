@@ -3,7 +3,6 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  // If deploying to GitHub Pages at https://<user>.github.io/<repo>/,
-  // uncomment and set base to '/<repo>/'
-  // base: '/content-studio/',
+  // Deploying to GitHub Pages at https://shammahpaul.github.io/content-studio/
+  base: '/content-studio/',
 });
